@@ -49,7 +49,51 @@ bool Sphere::localIntersect(Ray const &ray, Intersection &hit) const
 	// NOTE : hit.depth est la profondeur de l'intersection actuellement la plus proche,
 	// donc n'acceptez pas les intersections qui occurent plus loin que cette valeur.
 
-	return false;
+	Vector dir = ray.direction;
+	Vector co = ray.origin; //puisque sphere centered en (0,0,0)
+	double t0, t1;
+
+	double a = dir.dot(dir);
+	double b = 2.0 * co.dot(dir);
+	double c = co.dot(co) - (this->radius * this->radius);
+	double discriminant = b * b - 4 * a * c;
+
+	if (discriminant < 0)
+		return false;
+	else if (discriminant == 0)
+		t0 = t1 = -0.5 * b / a;
+	else {
+		double q = (b > 0) ?
+			-0.5 * (b + sqrt(discriminant)) :
+			-0.5 * (b - sqrt(discriminant));
+		t0 = q / a;
+		t1 = c / q;
+	}
+
+	if (t0 > t1) std::swap(t0, t1);
+
+	bool isInside = false;
+	if (t0 < 0 && t1 > 0) {
+		std::swap(t0, t1);
+		isInside = true;
+
+	}
+	else if (t0 < 0)
+		return false;
+
+	Vector intersectionPos = ray.origin + dir * t0;
+
+	if (t0 < hit.depth) { //hit! 
+		hit.depth = t0;
+		hit.position = intersectionPos;
+		hit.normal = intersectionPos.normalized();
+		if (isInside)
+			hit.normal = -hit.normal;
+		return true;
+	}
+	else {
+		return false;
+	}
 }
 
 
@@ -62,7 +106,25 @@ bool Plane::localIntersect(Ray const &ray, Intersection &hit) const
 	// NOTE : hit.depth est la profondeur de l'intersection actuellement la plus proche,
 	// donc n'acceptez pas les intersections qui occurent plus loin que cette valeur.
 
-    return false;
+	Vector p0(0, 0, 0);
+	Vector l0 = ray.origin;
+	Vector dir = ray.direction;
+	double t;
+
+	Vector n(0, 0, 1);
+
+	double denom = dir.dot(n);
+	if (std::abs(denom) > 1e-6) {
+		Vector p0l0 = p0 - l0;
+		t = p0l0.dot(n) / denom;
+		if (t >= 0 && t < hit.depth) {
+			hit.depth = t;
+			hit.position = ray.origin + dir * t;
+			hit.normal = n;
+			return true;
+		}
+	}
+	return false;
 }
 
 
@@ -138,5 +200,37 @@ bool Mesh::intersectTriangle(Ray const &ray,
 	// donc n'acceptez pas les intersections qui occurent plus loin que cette valeur.
 	//!!! NOTE UTILE : pour le point d'intersection, sa normale doit satisfaire hit.normal.dot(ray.direction) < 0
 
+	Vector p0p1 = p1 - p0;
+	Vector p0p2 = p2 - p0;
+	Vector dir = ray.direction;
+	Vector pvec = dir.cross(p0p2);
+	double det = p0p1.dot(pvec);
+
+	double kEpsilon = 1e-6;
+
+	if (abs(det) < kEpsilon) return false;
+
+	float invDet = 1 / det;
+
+	Vector tvec = ray.origin - p0;
+	double u = tvec.dot(pvec) * invDet;
+	if (u < 0 || u > 1) return false;
+
+	Vector qvec = tvec.cross(p0p1);
+	double v = dir.dot(qvec) * invDet;
+	if (v < 0 || u + v > 1) return false;
+
+	double t = p0p2.dot(qvec) * invDet;
+
+	if (t > 0 && t < hit.depth) {
+		Vector n = (p0p1.cross(p0p2)).normalized();
+		hit.depth = t;
+		if (det < 0)
+			n = -n;
+		hit.normal = n;
+		hit.position = ray.origin + dir * t;
+
+		return true;
+	}
 	return false;
 }

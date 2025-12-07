@@ -34,6 +34,8 @@ public:
 		#define SET_FLOAT(_name) _name = params[#_name].size() ? params[#_name][0] : 0;
 		SET_FLOAT(shininess)
 		SET_FLOAT(reflect)
+		SET_FLOAT(refract)
+		SET_FLOAT(transparent)
 	}
 
 	// Couleurs ambiante/diffuse/speculaire/emissive.
@@ -48,6 +50,12 @@ public:
 	// Coefficient de reflection coefficient [0 -> aucune reflection, 1 -> reflection totale]
 	// Toutes les valeurs entre sont mélangées par ce facteur avec la couleur de la surface.
 	double reflect;
+
+	// refraction coefficient [0 -> no refraction, 1 -> total refraction]
+	double refract;
+
+	// transparency (float but between 0 and 1)
+	double transparent;
 };
 
 

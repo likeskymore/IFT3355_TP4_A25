@@ -9,7 +9,6 @@
 #include <iostream>
 #include <sstream>
 #include <map>
-#include <vector>
 
 #include "raytracer.hpp"
 #include "image.hpp"
@@ -35,6 +34,23 @@ void Raytracer::render(const char *filename, const char *depth_filename,
 	//!!! NOTE UTILE : Le plan de vue peut être n'importe où, mais il sera implémenté différement.
 	// Vous trouverez des références dans le cours.
 
+	Vector upNormalized = scene.camera.up.normalized();
+	Vector lookAt = scene.camera.center - scene.camera.position;
+	double distance = lookAt.length();
+	lookAt = lookAt / distance;  //Pour qu'il soit unitaire
+	double halfScreenHeight = tan(deg2rad(scene.camera.fovy / 2)) * distance;
+	double screenHeight = halfScreenHeight * 2;
+	double screenWidth = scene.camera.aspect * screenHeight;
+
+	int nx = scene.resolution[0];
+	int ny = scene.resolution[1];
+
+	double pixelHeight = screenHeight / ny;  //deltaV
+	double pixelWidth = screenWidth / nx;   // deltaU
+
+	Vector u = -upNormalized.cross(lookAt).normalized(); // À droite de la caméra
+	Vector bigO = scene.camera.position + lookAt * distance + u * (-screenWidth / 2) + -upNormalized * halfScreenHeight;//Coin de l'écran à partir duquel je vais balayer
+
 
     // Itère sur tous les pixels de l'image.
     for(int y = 0; y < scene.resolution[1]; y++) {
@@ -54,7 +70,7 @@ void Raytracer::render(const char *filename, const char *depth_filename,
 				// Mettez en place le rayon primaire en utilisant les paramètres de la caméra.
 				//!!! NOTE UTILE : tous les rayons dont les coordonnées sont exprimées dans le
 				//                 repère monde doivent avoir une direction normalisée.
-				
+				ray = Ray(scene.camera.position, (bigO + (x + 0.5) * pixelWidth * u + (y + 0.5) * pixelHeight * upNormalized - scene.camera.position).normalized());
 			}
 
             // Initialise la profondeur de récursivité du rayon.
@@ -113,6 +129,13 @@ bool Raytracer::trace(Ray const &ray,
     // - ne pas accepter les intersections plus lointaines que la profondeur donnée.
     // - appeler Raytracer::shade avec l'intersection la plus proche.
     // - renvoyer true ssi le rayon intersecte un objet.
+
+	// Initialise hit
+	Intersection hit;
+	hit.depth = depth;
+	bool boolHit = false;
+
+
 	if (scene.objects.empty())
 	{
 		// Pas d'objet dans la scène --> on rend la scène par défaut :
@@ -134,13 +157,62 @@ bool Raytracer::trace(Ray const &ray,
 		// @@@@@@ VOTRE CODE ICI
 		// Notez que pour Object::intersect(), le paramètre hit correspond à celui courant.
 		// Votre intersect() devrait être implémenté pour exclure toute intersection plus lointaine que hit.depth
+
+		for (auto objectIter = scene.objects.begin(); objectIter != scene.objects.end(); objectIter++) // Go through all objects
+		{	// S'il y a intersection :
+			bool pass = (**objectIter).intersect(ray, hit);
+
+			if (pass) {
+				outColor = shade(ray, rayDepth, hit, (**objectIter).material, scene);
+				if (hit.depth < depth)
+				{
+					depth = hit.depth;
+				}
+
+				boolHit = true;
+			}
+		}
 		
 	}
 
     // Décrémente la profondeur du rayon.
     rayDepth--;
 
-    return false; 
+    return boolHit; 
+}
+
+//Fonction de : https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel
+void fresnel(const Vector& I, const Vector& N, const double& ior, double& kr)
+{
+	double cosi = std::clamp(-1.0, 1.0, I.dot(N));
+	double etai = 1, etat = ior;
+	if (cosi > 0) { std::swap(etai, etat); }
+	// Compute sini using Snell's law
+	double sint = etai / etat * std::sqrt(std::max(0.0, 1 - cosi * cosi));
+	// Total internal reflection
+	if (sint >= 1) {
+		kr = 1;
+	}
+	else {
+		double cost = std::sqrt(std::max(0.0, 1 - sint * sint));
+		cosi = std::abs(cosi);
+		double Rs = ((etat * cosi) - (etai * cost)) / ((etat * cosi) + (etai * cost));
+		double Rp = ((etai * cosi) - (etat * cost)) / ((etai * cosi) + (etat * cost));
+		kr = (Rs * Rs + Rp * Rp) / 2;
+	}
+}
+
+//Fonction de : https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel
+Vector refract(const Vector& I, const Vector& N, const double& ior)
+{
+	double cosi = std::clamp(-1.0, 1.0, I.dot(N));
+	double etai = 1, etat = ior;
+	Vector n = N;
+	if (cosi < 0) { cosi = -cosi; }
+	else { std::swap(etai, etat); n = -N; }
+	double eta = etai / etat;
+	double k = 1 - eta * eta * (1 - cosi * cosi);
+	return k < 0 ? 0 : eta * I + (eta * cosi - std::sqrt(k)) * n;
 }
 
 
@@ -162,21 +234,78 @@ Vector Raytracer::shade(Ray const &ray,
 	Vector diffuse(0);
 	Vector ambient(0);
 	Vector specular(0);
+	Vector rayDir = ray.direction.normalized();
 	for (auto lightIter = scene.lights.begin(); lightIter != scene.lights.end(); lightIter++)
 	{
 		// @@@@@@ VOTRE CODE ICI
 		// Calculez l'illumination locale ici, souvenez-vous d'ajouter les lumières ensemble.
 		// Testez également les ombres ici, si un point est dans l'ombre aucune couleur (sauf le terme ambient) ne devrait être émise.
-		
+		double a0 = (*lightIter).attenuation[0];
+		double a1 = (*lightIter).attenuation[1];
+		double a2 = (*lightIter).attenuation[2];
+
+		double d = ((*lightIter).position - intersection.position).length();
+
+		double attenuation = 1.0 / (a0 + a1 * d + a2 * d * d);
+		Vector eye = (ray.origin - intersection.position).normalized();
+		Vector normal = intersection.normal;
+		Vector light = ((*lightIter).position - intersection.position).normalized(); // light direction normalized result of (vertexPos - lightPos).
+		Vector halfway = ((light + eye) / 2.0).normalized();
+		Vector reflection = ((-light).reflect(normal)).normalized();
+
+		ambient += material.ambient * (*lightIter).ambient;
+
+		// Calc shadow
+		Ray shadowRay(intersection.position + light * (2e-6), light);
+		Vector shadowOut;
+
+		double depth = ((*lightIter).position - shadowRay.origin).length();
+
+		bool shadow = trace(shadowRay, rayDepth, scene, shadowOut, depth);
+
+		if (!shadow)
+		{
+			diffuse += attenuation * (material.diffuse * (*lightIter).diffuse * std::max(normal.dot(light), 0.0));
+			specular += attenuation * (material.specular * (*lightIter).specular * std::pow(std::max(reflection.dot(eye), 0.0), material.shininess));
+		}
 	}
 
 	Vector reflectedLight(0);
+	Vector refractedLight(0);
+	double kr = 1;
 	if ((!(ABS_FLOAT(material.reflect) < 1e-6)) && (rayDepth < MAX_RAY_RECURSION))
 	{
 		// @@@@@@ VOTRE CODE ICI
 		// Calculez la couleur réfléchie en utilisant trace() de manière récursive.
+		if (material.reflect > 0.0) { // object is shiny!
+			Vector R = (rayDir.reflect(intersection.normal)).normalized();
+			Ray reflectionRay(intersection.position + R * (2e-6), R);
+
+			double depth = DBL_MAX;
+
+			bool reflection = trace(reflectionRay, rayDepth, scene, reflectedLight, depth);
+		}
+
+		if (material.transparent > 0.0) { //object is transparent!
+
+			// Formules refraction : https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel
+			double epsilon = 1e-6; //so not directly on intersection
+
+			fresnel(rayDir, intersection.normal, material.refract, kr);
+
+			bool outside = rayDir.dot(intersection.normal) < 0;
+			Vector bias = epsilon * intersection.normal;
+
+			if (kr < 1) { // If not total internal reflection
+				Vector refractionDirection = (refract(rayDir, intersection.normal, material.refract).normalized());
+				Vector refractionRayOrig = outside ? intersection.position - bias : intersection.position + bias;
+				Ray refractionRay(refractionRayOrig, refractionDirection);
+				double depth = DBL_MAX;
+				bool refraction = trace(refractionRay, rayDepth, scene, refractedLight, depth);
+			}
+		}
 		
 	}
 
-	return material.emission + ambient + diffuse + specular + material.reflect * reflectedLight;
+	return material.emission + ambient + diffuse + specular + kr * material.reflect * reflectedLight + refractedLight * (1 - kr) * material.refract;
 }

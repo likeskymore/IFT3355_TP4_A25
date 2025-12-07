@@ -67,7 +67,7 @@ int main(int argc, char **argv)
 	}
 	
 	// Décommentez si vous utilisez Visual Studio
-	// system("pause");
+	system("pause");
 	return 0;
 }
 

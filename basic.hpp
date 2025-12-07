@@ -1,4 +1,4 @@
-#ifndef LINALG_H
+﻿#ifndef LINALG_H
 #define LINALG_H
 
 #include <vector>
@@ -181,6 +181,13 @@ public:
 		return v;
 	}
     
+	// REFLECT
+	Vector reflect(const Vector& normal) const
+	{
+		//r=d−2(d.n)n
+		return (*this - 2 * this->dot(normal) * normal);
+	}
+
     // Addition and subtraction of represented coordinates.
 	Vector operator+(Vector const &other) const
 	{
